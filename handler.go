@@ -8,7 +8,7 @@ import (
 )
 
 type deferredHandler struct {
-	*sync.Mutex
+	sync.Mutex
 	handler http.Handler
 }
 
@@ -37,17 +37,38 @@ func failedHandler(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "permanent error creating handler", http.StatusServiceUnavailable)
 }
 
+// default values populating options objects
+const (
+	DefaultRetryAfter   = time.Second * 10
+	DefaultTimeoutAfter = time.Second * 15
+)
+
+// DefaultNotify does nothing with the passed error
+var DefaultNotify = func(error) {}
+
 type options struct {
-	notify       func(error)
-	timeoutAfter time.Duration
-	retryAfter   time.Duration
+	notify                   func(error)
+	timeoutAfter, retryAfter time.Duration
 }
 
-// Config is a function that mutates an options object
+func newOptions(configs ...Config) options {
+	o := options{
+		notify:       DefaultNotify,
+		retryAfter:   DefaultRetryAfter,
+		timeoutAfter: DefaultTimeoutAfter,
+	}
+	for _, c := range configs {
+		o = c(o)
+	}
+	return o
+}
+
+// Config is a function that returns an updated options object
+// when being passed another
 type Config func(options) options
 
-// WithRetryAfter returns a Config that will set the given duration
-// as the interval for retrying handler creation
+// WithRetryAfter returns a Config that will ensure the given duration
+// is used as the interval for retrying handler creation
 func WithRetryAfter(v time.Duration) Config {
 	return func(o options) options {
 		o.retryAfter = v
@@ -55,7 +76,8 @@ func WithRetryAfter(v time.Duration) Config {
 	}
 }
 
-// WithNotify returns a Config that will use the given Notify func
+// WithNotify returns a Config that will ensure the given Notify func
+// is called when handler creation fails
 func WithNotify(n func(error)) Config {
 	return func(o options) options {
 		o.notify = n
@@ -63,7 +85,8 @@ func WithNotify(n func(error)) Config {
 	}
 }
 
-// WithTimeoutAfter returns a Config that will use the given handler timeout value
+// WithTimeoutAfter returns a Config that will ensure the pending handler
+// will timeout after the given duration
 func WithTimeoutAfter(v time.Duration) Config {
 	return func(o options) options {
 		o.timeoutAfter = v
@@ -71,42 +94,21 @@ func WithTimeoutAfter(v time.Duration) Config {
 	}
 }
 
-// default values populating options objects
-const (
-	DefaultRetryAfter   = time.Second * 10
-	DefaultTimeoutAfter = time.Second * 15
-)
-
-// default values populating options objects
-var (
-	DefaultNotify = func(error) {}
-)
-
-// NewHandler creates a new http.Handler that will try to queue requests until the
-// handler creation succeeded. On a failed creation attempt the passed notify function
-// will be called with the error returned by `create`. In case the passed
-// context is cancelled before a handler could be created, retrying will be
-// terminated and the handler will permanently return 503.
+// NewHandler returns a new http.Handler that will try to queue requests until the
+// handler creation succeeded. On a failed creation attempt the notify function
+// will be called with the error returned by `create` if it is configured.
+// In case the passed context is cancelled before a handler could be created,
+// retrying will be terminated and the handler will permanently return 503.
 func NewHandler(ctx context.Context, create func() (http.Handler, error), configs ...Config) http.Handler {
-	settings := options{
-		notify:       DefaultNotify,
-		timeoutAfter: DefaultTimeoutAfter,
-		retryAfter:   DefaultRetryAfter,
-	}
-
-	for _, c := range configs {
-		settings = c(settings)
-	}
-
+	opts := newOptions(configs...)
 	send, updateHandler := newRepeater()
 
 	h := deferredHandler{
-		Mutex: &sync.Mutex{},
 		handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			select {
 			case h := <-updateHandler:
 				h.ServeHTTP(w, r)
-			case <-time.NewTimer(settings.timeoutAfter).C:
+			case <-time.NewTimer(opts.timeoutAfter).C:
 				http.Error(w, "timed out waiting for handler to be created and sent", http.StatusServiceUnavailable)
 			}
 		}),
@@ -122,7 +124,7 @@ func NewHandler(ctx context.Context, create func() (http.Handler, error), config
 	go func() {
 		schedule := make(chan time.Time)
 		go func() {
-			for t := time.Tick(settings.retryAfter); true; <-t {
+			for t := time.Tick(opts.retryAfter); true; <-t {
 				schedule <- time.Now()
 			}
 		}()
@@ -137,7 +139,7 @@ func NewHandler(ctx context.Context, create func() (http.Handler, error), config
 					send(next)
 					return
 				}
-				settings.notify(err)
+				opts.notify(err)
 			}
 		}
 	}()
