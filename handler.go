@@ -7,12 +7,12 @@ import (
 	"time"
 )
 
-type deferredHandler struct {
+type deferred struct {
 	sync.Mutex
 	handler http.Handler
 }
 
-func (h *deferredHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (h *deferred) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.Lock()
 	c := h.handler
 	h.Unlock()
@@ -106,7 +106,7 @@ func WithTimeoutAfter(v time.Duration) Config {
 	}
 }
 
-// NewHandler returns a new http.Handler that will try to queue requests until the
+// NewHandler returns a new http.Handler that will try to queue requests until
 // handler creation succeeded. On a failed creation attempt the notify function
 // will be called with the error returned by `create` if it is configured.
 // In case the passed context is cancelled before a handler could be created,
@@ -116,7 +116,7 @@ func NewHandler(ctx context.Context, create func() (http.Handler, error), config
 	opts := newOptions(configs...)
 	send, updateHandler := newRepeater()
 
-	h := deferredHandler{
+	h := deferred{
 		handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			select {
 			case h := <-updateHandler:
