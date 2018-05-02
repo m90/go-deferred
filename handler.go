@@ -135,18 +135,15 @@ func NewHandler(ctx context.Context, create func() (http.Handler, error), config
 	}()
 
 	go func() {
-		schedule := make(chan time.Time)
-		go func() {
-			for t := time.Tick(opts.retryAfter); true; <-t {
-				schedule <- time.Now()
-			}
-		}()
+		schedule := time.NewTimer(0)
+		defer schedule.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				send(opts.failedHandler)
 				return
-			case <-schedule:
+			case <-schedule.C:
+				schedule.Reset(opts.retryAfter)
 				next, err := create()
 				if err == nil {
 					send(next)
