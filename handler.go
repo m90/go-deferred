@@ -19,20 +19,6 @@ func (h *deferred) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	c.ServeHTTP(w, r)
 }
 
-func newRepeater() (func(http.Handler), <-chan http.Handler) {
-	receive, repeat := make(chan http.Handler), make(chan http.Handler)
-	go func() {
-		v := <-receive
-		close(receive)
-		for {
-			repeat <- v
-		}
-	}()
-	return func(next http.Handler) {
-		receive <- next
-	}, repeat
-}
-
 // default values populating options objects
 const (
 	DefaultRetryAfter   = time.Second * 10
@@ -106,6 +92,20 @@ func WithTimeoutAfter(v time.Duration) Config {
 	}
 }
 
+func awaitHandler() (func(http.Handler), <-chan http.Handler) {
+	receive, repeat := make(chan http.Handler), make(chan http.Handler)
+	go func() {
+		v := <-receive
+		close(receive)
+		for {
+			repeat <- v
+		}
+	}()
+	return func(next http.Handler) {
+		receive <- next
+	}, repeat
+}
+
 // NewHandler returns a new http.Handler that will try to queue requests until
 // handler creation succeeded. On a failed creation attempt the notify function
 // will be called with the error returned by `create` if it is configured.
@@ -114,23 +114,23 @@ func WithTimeoutAfter(v time.Duration) Config {
 // use the behavior of a passed `FailedHandler` Config.
 func NewHandler(ctx context.Context, create func() (http.Handler, error), configs ...Config) http.Handler {
 	opts := newOptions(configs...)
-	send, updateHandler := newRepeater()
+	resolve, nextHandler := awaitHandler()
 
 	h := deferred{
 		handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			select {
-			case h := <-updateHandler:
-				h.ServeHTTP(w, r)
-			case <-time.NewTimer(opts.timeoutAfter).C:
+			case handler := <-nextHandler:
+				handler.ServeHTTP(w, r)
+			case <-time.After(opts.timeoutAfter):
 				http.Error(w, "timed out waiting for handler to be created and sent", http.StatusServiceUnavailable)
 			}
 		}),
 	}
 
 	go func() {
-		next := <-updateHandler
+		handler := <-nextHandler
 		h.Lock()
-		h.handler = next
+		h.handler = handler
 		h.Unlock()
 	}()
 
@@ -140,13 +140,13 @@ func NewHandler(ctx context.Context, create func() (http.Handler, error), config
 		for {
 			select {
 			case <-ctx.Done():
-				send(opts.failedHandler)
+				resolve(opts.failedHandler)
 				return
 			case <-schedule.C:
 				schedule.Reset(opts.retryAfter)
 				next, err := create()
 				if err == nil {
-					send(next)
+					resolve(next)
 					return
 				}
 				opts.notify(err)
