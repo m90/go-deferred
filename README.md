@@ -32,7 +32,7 @@ defer cancel()
 
 // NewHandler returns instantly
 h := deferred.NewHandler(
-	// in case the context is cancelled the handler will stop buffering and 503 permanently
+	// in case the context is cancelled the handler will stop buffering and fail permanently
 	timeout,
 	// in case no error is returned, the handler will stop buffering and use the returned handler
 	createLuckyHandler,
@@ -42,6 +42,9 @@ h := deferred.NewHandler(
 	},
 	deferred.WithRetryAfter(time.Second), // retry after a second
 	deferred.WithTimeoutAfter(time.Second * 15), // buffered requests will timeout after 15 seconds
+	deferred.WithFailedHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "sorry, but i stopped trying", http.StatusServiceUnavailable)
+	})),
 )
 
 http.Handle("/", h)

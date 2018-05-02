@@ -62,19 +62,22 @@ func TestNew(t *testing.T) {
 			}),
 			WithRetryAfter(time.Minute),
 			WithTimeoutAfter(time.Minute),
+			WithFailedHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Error(w, "nope", http.StatusNotImplemented)
+			})),
 		)
 
 		w1, r1 := httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil)
 		h.ServeHTTP(w1, r1)
 
-		if w1.Code != http.StatusServiceUnavailable {
+		if w1.Code != http.StatusNotImplemented {
 			t.Errorf("Unexpected status code %v", w1.Code)
 		}
 
 		w2, r2 := httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil)
 		h.ServeHTTP(w2, r2)
 
-		if w2.Code != http.StatusServiceUnavailable {
+		if w2.Code != http.StatusNotImplemented {
 			t.Errorf("Unexpected status code %v", w2.Code)
 		}
 

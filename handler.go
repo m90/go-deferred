@@ -33,29 +33,32 @@ func newRepeater() (func(http.Handler), <-chan http.Handler) {
 	}, repeat
 }
 
-func failedHandler(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "permanent error creating handler", http.StatusServiceUnavailable)
-}
-
 // default values populating options objects
 const (
 	DefaultRetryAfter   = time.Second * 10
 	DefaultTimeoutAfter = time.Second * 15
 )
 
-// DefaultNotify does nothing with the passed error
-var DefaultNotify = func(error) {}
+// default values populating options objects
+var (
+	DefaultNotify        = func(error) {}
+	DefaultFailedHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "permanent error creating handler", http.StatusServiceUnavailable)
+	})
+)
 
 type options struct {
 	notify                   func(error)
+	failedHandler            http.Handler
 	timeoutAfter, retryAfter time.Duration
 }
 
 func newOptions(configs ...Config) options {
 	o := options{
-		notify:       DefaultNotify,
-		retryAfter:   DefaultRetryAfter,
-		timeoutAfter: DefaultTimeoutAfter,
+		notify:        DefaultNotify,
+		failedHandler: DefaultFailedHandler,
+		retryAfter:    DefaultRetryAfter,
+		timeoutAfter:  DefaultTimeoutAfter,
 	}
 	for _, c := range configs {
 		o = c(o)
@@ -72,6 +75,15 @@ type Config func(options) options
 func WithRetryAfter(v time.Duration) Config {
 	return func(o options) options {
 		o.retryAfter = v
+		return o
+	}
+}
+
+// WithFailedHandler returns a Config that will ensure the given handler
+// will be used when the creation has permanently failed
+func WithFailedHandler(h http.Handler) Config {
+	return func(o options) options {
+		o.failedHandler = h
 		return o
 	}
 }
@@ -98,7 +110,8 @@ func WithTimeoutAfter(v time.Duration) Config {
 // handler creation succeeded. On a failed creation attempt the notify function
 // will be called with the error returned by `create` if it is configured.
 // In case the passed context is cancelled before a handler could be created,
-// retrying will be terminated and the handler will permanently return 503.
+// retrying will be terminated and the handler will permanently return 503 or
+// use the behavior of a passed `FailedHandler` Config.
 func NewHandler(ctx context.Context, create func() (http.Handler, error), configs ...Config) http.Handler {
 	opts := newOptions(configs...)
 	send, updateHandler := newRepeater()
@@ -131,7 +144,7 @@ func NewHandler(ctx context.Context, create func() (http.Handler, error), config
 		for {
 			select {
 			case <-ctx.Done():
-				send(http.HandlerFunc(failedHandler))
+				send(opts.failedHandler)
 				return
 			case <-schedule:
 				next, err := create()
