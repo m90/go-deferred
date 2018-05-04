@@ -12,10 +12,10 @@ type deferred struct {
 	handler http.Handler
 }
 
-func (h *deferred) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	h.Lock()
-	c := h.handler
-	h.Unlock()
+func (d *deferred) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	d.Lock()
+	c := d.handler
+	d.Unlock()
 	c.ServeHTTP(w, r)
 }
 
@@ -58,9 +58,9 @@ type Config func(options) options
 
 // WithRetryAfter returns a Config that will ensure the given duration
 // is used as the interval for retrying handler creation
-func WithRetryAfter(v time.Duration) Config {
+func WithRetryAfter(d time.Duration) Config {
 	return func(o options) options {
-		o.retryAfter = v
+		o.retryAfter = d
 		return o
 	}
 }
@@ -85,9 +85,9 @@ func WithNotify(n func(error)) Config {
 
 // WithTimeoutAfter returns a Config that will ensure the pending handler
 // will timeout after the given duration
-func WithTimeoutAfter(v time.Duration) Config {
+func WithTimeoutAfter(d time.Duration) Config {
 	return func(o options) options {
-		o.timeoutAfter = v
+		o.timeoutAfter = d
 		return o
 	}
 }
