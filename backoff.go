@@ -7,33 +7,29 @@ import (
 )
 
 const (
-	maxDelay = 1000 * time.Second
-	factor   = 1.6
-	maxInt64 = float64(math.MaxInt64 - 512)
+	maxDelay   = 1000 * time.Second
+	factor     = 1.6
+	maxFloat64 = float64(math.MaxInt64 - 512)
 )
 
-// Strategy defines the algorithm for backoff
-type Strategy interface {
-	Backoff() time.Duration
-	Reset()
+type strategy interface {
+	backoff() time.Duration
 }
 
 type retry struct {
 	delay time.Duration
 }
 
-func (r retry) Backoff() time.Duration {
+func (r retry) backoff() time.Duration {
 	return r.delay
 }
-
-func (r retry) Reset() {}
 
 type exponential struct {
 	initDelay time.Duration
 	retryNum  float64
 }
 
-func (ex *exponential) Backoff() time.Duration {
+func (ex *exponential) backoff() time.Duration {
 	min := ex.initDelay
 	if min <= 0 {
 		min = 100 * time.Millisecond
@@ -49,7 +45,7 @@ func (ex *exponential) Backoff() time.Duration {
 	ex.retryNum++
 	durf = rand.Float64()*(durf-minf) + minf
 	//ensure float64 wont overflow int64
-	if durf > maxInt64 {
+	if durf > maxFloat64 {
 		return maxDelay
 	}
 	dur := time.Duration(durf)
@@ -61,8 +57,4 @@ func (ex *exponential) Backoff() time.Duration {
 		return maxDelay
 	}
 	return dur
-}
-
-func (ex *exponential) Reset() {
-	ex.retryNum = 0
 }

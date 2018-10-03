@@ -37,7 +37,7 @@ type options struct {
 	notify        func(error)
 	failedHandler http.Handler
 	timeoutAfter  time.Duration
-	Strategy
+	strategy
 }
 
 func newOptions(configs ...Config) options {
@@ -45,7 +45,7 @@ func newOptions(configs ...Config) options {
 		notify:        DefaultNotify,
 		failedHandler: DefaultFailedHandler,
 		timeoutAfter:  DefaultTimeoutAfter,
-		Strategy:      retry{DefaultRetryAfter},
+		strategy:      retry{DefaultRetryAfter},
 	}
 	for _, c := range configs {
 		o = c(o)
@@ -61,7 +61,7 @@ type Config func(options) options
 // is used as the interval for retrying handler creation
 func WithRetryAfter(d time.Duration) Config {
 	return func(o options) options {
-		o.Strategy = retry{d}
+		o.strategy = retry{d}
 		return o
 	}
 }
@@ -70,7 +70,7 @@ func WithRetryAfter(d time.Duration) Config {
 // is used for retrying handler creation with exponential delay
 func WithExponentialBackoff(d time.Duration) Config {
 	return func(o options) options {
-		o.Strategy = &exponential{initDelay: d}
+		o.strategy = &exponential{initDelay: d}
 		return o
 	}
 }
@@ -147,14 +147,13 @@ func NewHandler(ctx context.Context, create func() (http.Handler, error), config
 	go func() {
 		schedule := time.NewTimer(0)
 		defer schedule.Stop()
-		defer opts.Reset()
 		for {
 			select {
 			case <-ctx.Done():
 				resolve(opts.failedHandler)
 				return
 			case <-schedule.C:
-				schedule.Reset(opts.Backoff())
+				schedule.Reset(opts.backoff())
 				next, err := create()
 				if err == nil {
 					resolve(next)
