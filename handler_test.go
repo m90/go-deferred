@@ -114,7 +114,7 @@ func TestNew(t *testing.T) {
 		wg.Wait()
 	})
 
-	t.Run("retries", func(t *testing.T) {
+	t.Run("retryAfter backoff strategy", func(t *testing.T) {
 		errors := []error{}
 		count := 0
 		h := NewHandler(
@@ -150,6 +150,55 @@ func TestNew(t *testing.T) {
 
 		time.Sleep(time.Second)
 
+		w, r := httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil)
+		h.ServeHTTP(w, r)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("Unexpected status code %v", w.Code)
+		}
+
+		if len(errors) != 5 {
+			t.Errorf("Unexpected list of errors %v", errors)
+		}
+
+		wg.Wait()
+	})
+
+	t.Run("exponential backoff strategy", func(t *testing.T) {
+		errors := []error{}
+		count := 0
+		h := NewHandler(
+			context.Background(),
+			func() (http.Handler, error) {
+				if count < 5 {
+					count++
+					return nil, fmt.Errorf("count %v still lt 5", count)
+				}
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Write([]byte("finally"))
+				}), nil
+			},
+			WithNotify(func(err error) {
+				errors = append(errors, err)
+			}),
+			WithExponentialBackoff(time.Second/100),
+		)
+
+		wg := sync.WaitGroup{}
+		wg.Add(5)
+
+		for i := 0; i < 5; i++ {
+			go func() {
+				w, r := httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil)
+				h.ServeHTTP(w, r)
+				if w.Code != http.StatusOK {
+					t.Errorf("Unexpected status code %v", w.Code)
+				}
+				wg.Done()
+			}()
+		}
+
+		time.Sleep(1 * time.Second)
 		w, r := httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil)
 		h.ServeHTTP(w, r)
 
